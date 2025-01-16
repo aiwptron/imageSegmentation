@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Segmentation</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+
+        #controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        input[type="file"] {
+            padding: 10px 15px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            background-color: #fff;
+            transition: background-color 0.2s ease;
+        }
+
+        input[type="file"]:hover {
+            background-color: #f0f0f0;
+        }
+
+        #canvasContainer {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        canvas {
+            border: 1px solid #ccc;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+        }
+
+        .canvas-label {
+            text-align: center;
+            font-size: 14px;
+            color: #555;
+        }
+
+        .focus-score {
+            text-align: center;
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Image Segmentation</h1>
+    <div id="controls">
+        <input type="file" id="imageUpload" accept="image/*">
+    </div>
+    <div id="canvasContainer">
+        <div>
+            <canvas id="originalCanvas" width="480" height="360"></canvas>
+            <div class="canvas-label">Original Image</div>
+        </div>
+        <div>
+            <canvas id="segmentedCanvas" width="480" height="360"></canvas>
+            <div class="canvas-label">
+                Person Only<br>
+                <span id="personBrightness"></span><br>
+                <span id="personSharpness"></span>
+            </div>
+        </div>
+        <div>
+            <canvas id="backgroundCanvas" width="480" height="360"></canvas>
+            <div class="canvas-label">
+                Background Only<br>
+                <span id="backgroundBrightness"></span><br>
+                <span id="backgroundSharpness"></span>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const imageUpload = document.getElementById('imageUpload');
+        const originalCanvas = document.getElementById('originalCanvas');
+        const segmentedCanvas = document.getElementById('segmentedCanvas');
+        const backgroundCanvas = document.getElementById('backgroundCanvas');
+
+        const originalCtx = originalCanvas.getContext('2d');
+        const segmentedCtx = segmentedCanvas.getContext('2d');
+        const backgroundCtx = backgroundCanvas.getContext('2d');
+
+        const personFocusScoreElement = document.getElementById('personFocusScore');
+        const backgroundFocusScoreElement = document.getElementById('backgroundFocusScore');
+
+        // Initialize MediaPipe Selfie Segmentation
+        const selfieSegmentation = new SelfieSegmentation({
+            locateFile: (file) =>
+                `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`,
+        });
+
+        selfieSegmentation.setOptions({
+            modelSelection: 1, // Choose between model 0 (general) or 1 (landscape optimized)
+        });
+        selfieSegmentation.onResults(onResults);
+
+        imageUpload.addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const img = new Image();
+                img.src = URL.createObjectURL(file);
+                img.onload = () => {
+                    // Resize and draw the image to the original canvas
+                    originalCtx.drawImage(img, 0, 0, 480, 360);
+
+                    // Pass the image to MediaPipe
+                    selfieSegmentation.send({ image: originalCanvas });
+                };
+            }
+        });
+
+        function onResults(results) {
+  // Clear the segmented and background canvases
+  segmentedCtx.clearRect(0, 0, segmentedCanvas.width, segmentedCanvas.height);
+  backgroundCtx.clearRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+
+  // Draw the segmented mask on the segmented canvas
+  segmentedCtx.drawImage(
+    results.segmentationMask,
+    0,
+    0,
+    segmentedCanvas.width,
+    segmentedCanvas.height
+  );
+
+  // Blend the mask to isolate the person
+  segmentedCtx.globalCompositeOperation = 'source-in';
+  segmentedCtx.drawImage(originalCanvas, 0, 0, 480, 360);
+  segmentedCtx.globalCompositeOperation = 'source-over';
+
+  // Draw the segmented mask on the background canvas
+  backgroundCtx.drawImage(
+    results.segmentationMask,
+    0,
+    0,
+    backgroundCanvas.width,
+    backgroundCanvas.height
+  );
+
+  // Blend the mask to isolate the background
+  backgroundCtx.globalCompositeOperation = 'source-out';
+  backgroundCtx.drawImage(originalCanvas, 0, 0, 480, 360);
+  backgroundCtx.globalCompositeOperation = 'source-over';
+
+  // Compute focus scores
+  const personFocusScore = calculateFocusScore(
+    segmentedCtx,
+    segmentedCanvas.width,
+    segmentedCanvas.height
+  );
+  const backgroundFocusScore = calculateFocusScore(
+    backgroundCtx,
+    backgroundCanvas.width,
+    backgroundCanvas.height
+  );
+
+  // Compute brightness
+  const personBrightness = calculateBrightness(
+    segmentedCtx,
+    segmentedCanvas.width,
+    segmentedCanvas.height
+  );
+  const backgroundBrightness = calculateBrightness(
+    backgroundCtx,
+    backgroundCanvas.width,
+    backgroundCanvas.height
+  );
+
+  // Display results
+  document.getElementById('personBrightness').textContent = `Brightness: ${personBrightness.toFixed(2)}`;
+  document.getElementById('personSharpness').textContent = `Sharpness: ${personFocusScore.toFixed(2)}`;
+  document.getElementById('backgroundBrightness').textContent = `Brightness: ${backgroundBrightness.toFixed(2)}`;
+  document.getElementById('backgroundSharpness').textContent = `Sharpness: ${backgroundFocusScore.toFixed(2)}`;
+
+  console.log(`Brightness (Person Only): ${personBrightness.toFixed(2)}`);
+  console.log(`Brightness (Background Only): ${backgroundBrightness.toFixed(2)}`);
+  console.log(`Sharpness (Person Only): ${personFocusScore.toFixed(2)}`);
+  console.log(`Sharpness (Background Only): ${backgroundFocusScore.toFixed(2)}`);
+}
+
+// Function to calculate brightness
+function calculateBrightness(context, width, height) {
+  const imageData = context.getImageData(0, 0, width, height);
+  const data = imageData.data;
+
+  let totalIntensity = 0;
+  let count = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    totalIntensity += gray;
+    count++;
+  }
+
+  return totalIntensity / count; // Average brightness
+}
+
+        // Function to calculate focus score using Laplacian kernel
+        function calculateFocusScore(context, width, height) {
+            const imageData = context.getImageData(0, 0, width, height);
+            const data = imageData.data;
+            const grayscale = [];
+
+            // Convert image to grayscale
+            for (let i = 0; i < data.length; i += 4) {
+                const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                grayscale.push(gray);
+            }
+
+            // Apply Laplacian kernel to calculate edge sharpness
+            const laplacianKernel = [
+                [0, 1, 0],
+                [1, -4, 1],
+                [0, 1, 0],
+            ];
+            const result = new Array(grayscale.length).fill(0);
+
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    let sum = 0;
+                    for (let ky = -1; ky <= 1; ky++) {
+                        for (let kx = -1; kx <= 1; kx++) {
+                            const pixel = grayscale[(y + ky) * width + (x + kx)];
+                            const weight = laplacianKernel[ky + 1][kx + 1];
+                            sum += pixel * weight;
+                        }
+                    }
+                    result[y * width + x] = sum;
+                }
+            }
+
+            // Calculate variance of the Laplacian result
+            const variance = calculateVariance(result);
+            return variance;
+        }
+
+        // Function to calculate variance
+        function calculateVariance(data) {
+            const validData = data.filter((value) => !isNaN(value)); // Ignore NaN values
+            const mean = validData.reduce((sum, val) => sum + val, 0) / validData.length;
+            const variance =
+                validData.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) /
+                validData.length;
+            return variance;
+        }
+    </script>
+</body>
+
+</html>
