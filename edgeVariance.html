@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Segmentation with Grid and Laplacian Variance</title>
+  <style>
+    canvas {
+      border: 1px solid black;
+      margin: 10px;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"></script>
+</head>
+<body>
+  <h1>Image Segmentation with Grid and Laplacian Variance</h1>
+  <input type="file" id="imageUpload" accept="image/*">
+  <div>
+    <canvas id="originalCanvas"></canvas>
+    <canvas id="personCanvas"></canvas>
+    <canvas id="backgroundCanvas"></canvas>
+    <canvas id="gridsCanvas"></canvas> <!-- Canvas for cropped grids -->
+  </div>
+  <script>
+    const imageUpload = document.getElementById('imageUpload');
+    const originalCanvas = document.getElementById('originalCanvas');
+    const personCanvas = document.getElementById('personCanvas');
+    const backgroundCanvas = document.getElementById('backgroundCanvas');
+    const gridsCanvas = document.getElementById('gridsCanvas'); // New canvas for grids
+    const originalCtx = originalCanvas.getContext('2d');
+    const personCtx = personCanvas.getContext('2d');
+    const backgroundCtx = backgroundCanvas.getContext('2d');
+    const gridsCtx = gridsCanvas.getContext('2d'); // New context for grids
+
+    // Set canvas dimensions
+    const width = 480;
+    const height = 360;
+    originalCanvas.width = width;
+    originalCanvas.height = height;
+    personCanvas.width = width;
+    personCanvas.height = height;
+    backgroundCanvas.width = width;
+    backgroundCanvas.height = height;
+    gridsCanvas.width = width; // Width for grids canvas
+    gridsCanvas.height = height; // Height for grids canvas
+
+    const selfieSegmentation = new SelfieSegmentation({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`,
+    });
+
+    selfieSegmentation.setOptions({
+      modelSelection: 1,
+    });
+
+    selfieSegmentation.onResults((results) => {
+      // Clear the canvases
+      personCtx.clearRect(0, 0, width, height);
+      backgroundCtx.clearRect(0, 0, width, height);
+      gridsCtx.clearRect(0, 0, width, height); // Clear the grids canvas
+
+      // Draw the segmented body
+      personCtx.drawImage(results.segmentationMask, 0, 0, width, height);
+      personCtx.globalCompositeOperation = 'source-in';
+      personCtx.drawImage(results.image, 0, 0, width, height);
+      personCtx.globalCompositeOperation = 'source-over';
+
+      // Draw the segmented background
+      backgroundCtx.drawImage(results.segmentationMask, 0, 0, width, height);
+      backgroundCtx.globalCompositeOperation = 'source-out';
+      backgroundCtx.drawImage(results.image, 0, 0, width, height);
+      backgroundCtx.globalCompositeOperation = 'source-over';
+
+      // Draw the grid on the background canvas
+      drawGrid(backgroundCanvas);
+
+      // Crop the grids, calculate Laplacian variance, and paste them in the new canvas
+      cropGridsAndCalculateVariance(backgroundCanvas, gridsCanvas, 6, 8);
+    });
+
+    imageUpload.addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        img.onload = () => {
+          // Draw the uploaded image onto the original canvas
+          originalCtx.clearRect(0, 0, width, height);
+          originalCtx.drawImage(img, 0, 0, width, height);
+
+          // Process the image with Selfie Segmentation
+          selfieSegmentation.send({ image: originalCanvas });
+        };
+      }
+    });
+
+    // Function to draw grid
+    const numCols = 8; // Number of columns
+    const numRows = 6; // Number of rows
+
+    function drawGrid(canvas) {
+      const ctx = canvas.getContext('2d');
+      const boxWidth = canvas.width / numCols;
+      const boxHeight = canvas.height / numRows;
+
+      // ctx.strokeStyle = 'red'; // Grid line color
+      // ctx.lineWidth = 1; // Grid line thickness
+
+      // Draw vertical lines
+      for (let i = 0; i <= numCols; i++) {
+        const x = i * boxWidth;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+
+      // Draw horizontal lines
+      for (let j = 0; j <= numRows; j++) {
+        const y = j * boxHeight;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+      }
+    }
+
+    // Function to crop grids and calculate Laplacian variance for each grid
+    function cropGridsAndCalculateVariance(backgroundCanvas, gridsCanvas, rows, cols) {
+  const ctx = backgroundCanvas.getContext("2d");
+  const gridWidth = backgroundCanvas.width / cols;
+  const gridHeight = backgroundCanvas.height / rows;
+  const gridsCtx = gridsCanvas.getContext("2d");
+  gridsCtx.clearRect(0, 0, gridsCanvas.width, gridsCanvas.height); // Clear the canvas
+
+  // Define edge box indices
+  const edgeBoxes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 24, 25, 32, 33, 40];
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const boxIndex = row * cols + col + 1; // Calculate the box number (1-based)
+
+      // Process only edge boxes
+      if (!edgeBoxes.includes(boxIndex)) {
+        continue;
+      }
+
+      // Extract grid image data
+      const imageData = ctx.getImageData(
+        col * gridWidth,
+        row * gridHeight,
+        gridWidth,
+        gridHeight
+      );
+
+      // Calculate Laplacian variance for the grid
+      const variance = calculateLaplacianVariance(imageData);
+
+      // Crop the grid and paste it to the new canvas
+      gridsCtx.putImageData(imageData, col * gridWidth, row * gridHeight);
+
+      // Display the Laplacian variance next to the grid
+      gridsCtx.font = '12px Arial';
+      gridsCtx.fillStyle = 'red';
+      gridsCtx.fillText(
+        `${variance.toFixed(2)}`,
+        col * gridWidth + 5,
+        row * gridHeight + 15
+      );
+    }
+  }
+}
+
+
+    // Function to calculate Laplacian variance for a single grid
+    function calculateLaplacianVariance(imageData) {
+      const { width, height, data } = imageData;
+      const grayData = new Uint8ClampedArray(width * height);
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        grayData[i / 4] = 0.299 * r + 0.587 * g + 0.114 * b;
+      }
+
+      const kernel = [0, 1, 0, 1, -4, 1, 0, 1, 0];
+      const laplacianData = new Float32Array(width * height);
+
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          let sum = 0;
+          for (let ky = -1; ky <= 1; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              const pixelIndex = (y + ky) * width + (x + kx);
+              const kernelValue = kernel[(ky + 1) * 3 + (kx + 1)];
+              sum += grayData[pixelIndex] * kernelValue;
+            }
+          }
+          laplacianData[y * width + x] = sum;
+        }
+      }
+
+      const mean = laplacianData.reduce((a, b) => a + b, 0) / laplacianData.length;
+      const variance = laplacianData.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / laplacianData.length;
+
+      return variance;
+    }
+  </script>
+</body>
+</html>
